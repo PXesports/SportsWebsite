@@ -7,6 +7,7 @@
     <title>PX E-Sports | Official Tournament Platform</title>
     <link rel="icon" type="image/png" href="logo3.png">
     <link rel="stylesheet" href="style.css">
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 
@@ -20,6 +21,9 @@
             <li><a href="#" class="nav-item" data-target="results">Results</a></li>
 
             <li><a href="#" class="nav-item" data-target="join-pay">Join & Pay</a></li>
+            <li><a href="#" id="pro-chat-link" class="nav-item hidden" data-target="pro-chat">
+                    <i class="fas fa-crown" style="color:gold; margin-right:5px;"></i>Chat
+                </a></li>
 
             <li><a href="#" id="admin-link" class="nav-item hidden" data-target="admin-zone"
                     style="color:var(--primary);">Admin Zone</a></li>
@@ -81,34 +85,49 @@
             </div>
         </section>
         <section id="join-pay" class="page-section hidden">
-            <h2 class="section-title"><i class="fas fa-file-invoice-dollar"></i> Registration & Community</h2>
+            <h1 class="section-title">Tournament Registration</h1>
 
-            <div class="grid-container">
-                <div class="card" style="text-align:center;">
-                    <h3 style="color: var(--primary);">STEP 1: PAYMENT</h3>
-                    <p style="color:#aaa; font-size: 0.8rem; margin-bottom: 15px;">Scan to pay entry fee via UPI</p>
+            <div class="card" style="max-width: 400px; text-align: center; margin: 0 auto;">
+                <h2 style="color: var(--primary);">ENTRY FEE: 20 Rs</h2>
 
-                    <img src="jpg ss .jpg" alt="Network Error"
-                        style="width: 220px; border: 4px solid var(--primary); border-radius: 12px; margin-bottom: 15px; background: white;">
-
-                    <div style="background: #000; padding: 12px; border-radius: 5px; border: 1px dashed #444;">
-                        <p style="font-size: 0.7rem; color: #777;">UPI ID</p>
-                        <code style="color: #fff; font-size: 1rem;">trio@upi</code>
-                    </div>
+                <div id="pc-payment-area">
+                    <p style="margin-bottom: 10px;">Scan this QR with any UPI App</p>
+                    <img src="jpg ss .jpg" style="width: 200px; border: 5px solid white; border-radius: 10px;">
                 </div>
 
+                <div id="mobile-payment-area" style="margin-top: 20px;">
+                    <button onclick="payViaUPI()" class="btn-primary">
+                        <i class="fas fa-mobile-alt"></i> PAY 20 Rs VIA UPI APP
+                    </button>
+                </div>
                 <div class="card"
-                    style="text-align:center; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 30px;">
-                    <i class="fab fa-discord" style="font-size: 4rem; color: #5865F2; margin-bottom: 20px;"></i>
-                    <h3 style="color: #fff;">STEP 2: JOIN SERVER</h3>
-                    <p style="color:#aaa; margin: 15px 0; font-size: 0.9rem;">
-                       Stay Connected With Us and Chat With Everyone!
-                    </p>
+                    style="max-width: 400px; text-align: center; display: flex; flex-direction: column; justify-content: center; border: 1px solid #5865F2;">
+                    <i class="fab fa-discord" style="font-size: 3rem; color: #5865F2; margin-bottom: 15px;"></i>
+                    <h3>Step 2: Verification</h3>
+                    <p style="margin: 10px 0; color: #aaa;">Make sure to Take Screenshot of Payment and Send it in Discord and stay Connected with Us!
+                        Details.</p>
 
-                    <a href="https://discord.gg/5KyCGeG5Hu" target="_blank" class="discord-btn">
-                        JOIN DISCORD Server
+                    <a href="https://discord.gg/v2PTFcWkuf" target="_blank" class="discord-btn">
+                        <i class="fas fa-external-link-alt"></i> JOIN DISCORD SERVER
                     </a>
                 </div>
+            </div>
+
+
+        </section>
+        <section id="pro-chat" class="page-section hidden">
+            <h2 class="section-title"><i class="fas fa-crown" style="color:gold;"></i> Members Chat</h2>
+
+            <div class="chat-container">
+                <div id="chat-box" class="chat-box">
+                    <div style="text-align:center; color:#555; margin-top:20px;">Welcome to the VIP Lounge. Be
+                        respectful!</div>
+                </div>
+
+                <form id="chat-form" class="chat-input-area">
+                    <input type="text" id="chat-msg" placeholder="Write a message..." autocomplete="off" required>
+                    <button type="submit"><i class="fas fa-paper-plane"></i></button>
+                </form>
             </div>
         </section>
         <section id="admin-zone" class="page-section hidden">
@@ -193,8 +212,33 @@
         </section>
 
     </div>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+    <script>
+        // --- PASTE YOUR FIREBASE CONFIG HERE ---
+        // Go to Firebase Console -> Project Settings -> General -> Scroll to "Your apps"
+        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+        const firebaseConfig = {
+            apiKey: "AIzaSyDgsTvaMxvxjOwVkarb-q0_S3UeXwB7DI4",
+            authDomain: "px-esports-ed887.firebaseapp.com",
+            databaseURL: "https://px-esports-ed887-default-rtdb.firebaseio.com",
+            projectId: "px-esports-ed887",
+            storageBucket: "px-esports-ed887.firebasestorage.app",
+            messagingSenderId: "341681199686",
+            appId: "1:341681199686:web:a674316240f342ce6b8847",
+            measurementId: "G-L20GGBHS9Q"
+        };
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+    </script>
 
     <script src="script.js"></script>
+</body>
+
+</html>
+
 </body>
 
 </html>
