@@ -1,8 +1,9 @@
 // ============================================
-// 1. CONFIGURATION
+// 1. CONFIGURATION & STATE
 // ============================================
 const OWNERS = ['aftabharis242@gmail.com', 'ayushmaharia70@gmail.com'];
 let currentUser = null;
+let chatListener = null;
 
 // DOM Elements
 const dom = {
@@ -29,7 +30,7 @@ document.getElementById('show-login').onclick = () => {
     dom.loginForm.classList.remove('hidden');
 };
 
-// REGISTER WITH TRIPLE UNIQUE CHECK
+// REGISTER WITH STRICT TRIPLE UNIQUE CHECK
 dom.regForm.onsubmit = async (e) => {
     e.preventDefault();
     
@@ -105,7 +106,7 @@ dom.loginForm.onsubmit = async (e) => {
         }
 
         // Login Success
-        currentUser = userSnap.docs[0].data();
+        currentUser = { id: userSnap.docs[0].id, ...userSnap.docs[0].data() };
         initApp();
 
     } catch (error) {
@@ -127,42 +128,72 @@ async function initApp() {
     const email = currentUser.email.toLowerCase();
     const isOwner = OWNERS.includes(email);
     
-
     // Check Admin Status from Cloud
     const adminSnap = await db.collection('admins').where('email', '==', email).get();
-    const isAdmin = !adminSnap.empty;
+    const isAdmin = !adminSnap.empty || currentUser.role === 'admin';
 
     // Show Admin/Owner Tabs
     if (isOwner || isAdmin) {
         dom.adminLink.classList.remove('hidden');
         initAdminListeners(); // Start listening for admin data
     }
-    if (isOwner) {
+    
+    if (isOwner && dom.ownerZone) {
         dom.ownerZone.classList.remove('hidden');
         initOwnerListeners();
     }
-    // Inside your login success or app init function:
-    if (currentUser.hasPaid || isAdmin || isOwner) {
-        document.getElementById('pro-chat-link').classList.remove('hidden');
-    }
 
-    // Inside your navigation click handler:
-    if (target === 'pro-chat') {
-        initProChat();
-    }
+    // Live Watcher for Chat Access (Updates UI instantly if admin grants access)
+    db.collection('users').doc(currentUser.id).onSnapshot(doc => {
+        const data = doc.data();
+        const chatLink = document.getElementById('pro-chat-link');
+        
+        // Show Chat Link if: Owner OR Admin OR Explicitly Granted Access
+        if (isOwner || data.role === 'admin' || data.chatAccess === true) {
+            chatLink.classList.remove('hidden');
+            currentUser.chatAccess = true;
+            currentUser.role = data.role; // Update local role
+        } else {
+            chatLink.classList.add('hidden');
+            currentUser.chatAccess = false;
+        }
+    });
 
-    // Load Public Data Listeners (Real-time)
+    // Load Public Data Listeners (Real-time Tournaments, Teams, Results)
     initPublicListeners();
+    
+    // Start at Home
     navigate('home');
 }
 
+// Unified Navigation Function
 function navigate(pageId) {
+    // Hide all pages
     document.querySelectorAll('.page-section').forEach(sec => sec.classList.add('hidden'));
+    
+    // Deactivate all nav links
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
 
-    document.getElementById(pageId).classList.remove('hidden');
-    const activeLink = document.querySelector(`.nav-item[data-target="${pageId}"]`);
-    if (activeLink) activeLink.classList.add('active');
+    // Show clicked page
+    const target = document.getElementById(pageId);
+    if (target) {
+        target.classList.remove('hidden');
+        
+        // Activate link
+        const activeLink = document.querySelector(`.nav-item[data-target="${pageId}"]`);
+        if (activeLink) activeLink.classList.add('active');
+    }
+
+    // Chat Logic: Start listener ONLY if on chat page
+    if (pageId === 'pro-chat') {
+        startProChat();
+    } else {
+        // Stop listening to chat if we leave the page to save resources
+        if (chatListener) {
+            chatListener(); // This function (returned by onSnapshot) stops the listener
+            chatListener = null;
+        }
+    }
 }
 
 // Nav Click Handlers
@@ -170,7 +201,7 @@ document.querySelectorAll('.nav-item').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
         navigate(link.getAttribute('data-target'));
-        dom.navLinks.classList.remove('active');
+        if(dom.navLinks) dom.navLinks.classList.remove('active'); // Close mobile menu
     });
 });
 document.querySelector('.hamburger').onclick = () => dom.navLinks.classList.toggle('active');
@@ -180,51 +211,57 @@ document.querySelector('.hamburger').onclick = () => dom.navLinks.classList.togg
 // ============================================
 
 function initPublicListeners() {
-    // A. Tournaments
+    // A. Tournaments (Collection: 'updates')
     db.collection('updates').orderBy('createdAt', 'desc')
         .onSnapshot(snapshot => {
             const list = document.getElementById('updates-list');
-            list.innerHTML = snapshot.docs.map(doc => {
-                const u = doc.data();
-                return `
-                    <div class="card">
-                        <h3>${u.title}</h3>
-                        <span class="card-meta"><i class="far fa-calendar-alt"></i> ${u.date} | <i class="far fa-clock"></i> ${u.time}</span>
-                        <p>${u.desc}</p>
-                    </div>
-                `;
-            }).join('') || '<p style="color:#666;">No active tournaments.</p>';
+            if(list) {
+                list.innerHTML = snapshot.docs.map(doc => {
+                    const u = doc.data();
+                    return `
+                        <div class="card">
+                            <h3>${u.title}</h3>
+                            <span class="card-meta"><i class="far fa-calendar-alt"></i> ${u.date} | <i class="far fa-clock"></i> ${u.time}</span>
+                            <p>${u.desc}</p>
+                        </div>
+                    `;
+                }).join('') || '<p style="color:#666;">No active tournaments.</p>';
+            }
         });
 
-    // B. Teams
+    // B. Teams (Collection: 'teams')
     db.collection('teams').orderBy('createdAt', 'desc')
         .onSnapshot(snapshot => {
             const list = document.getElementById('teams-list');
-            list.innerHTML = snapshot.docs.map(doc => {
-                const t = doc.data();
-                return `
-                    <div class="card">
-                        <h3>${t.name}</h3>
-                        <p style="color:#aaa; font-size:0.9rem;">${t.players}</p>
-                    </div>
-                `;
-            }).join('') || '<p style="color:#666;">No teams registered yet.</p>';
+            if(list) {
+                list.innerHTML = snapshot.docs.map(doc => {
+                    const t = doc.data();
+                    return `
+                        <div class="card">
+                            <h3>${t.name}</h3>
+                            <p style="color:#aaa; font-size:0.9rem;">${t.players}</p>
+                        </div>
+                    `;
+                }).join('') || '<p style="color:#666;">No teams registered yet.</p>';
+            }
         });
 
-    // C. Results
+    // C. Results (Collection: 'results')
     db.collection('results').orderBy('createdAt', 'desc')
         .onSnapshot(snapshot => {
             const list = document.getElementById('results-list');
-            list.innerHTML = snapshot.docs.map(doc => {
-                const r = doc.data();
-                return `
-                    <tr>
-                        <td>${r.tourName}</td>
-                        <td style="color:var(--primary); font-weight:bold;">${r.winner}</td>
-                        <td>${r.runner}</td>
-                    </tr>
-                `;
-            }).join('') || '<tr><td colspan="3">No results published.</td></tr>';
+            if(list) {
+                list.innerHTML = snapshot.docs.map(doc => {
+                    const r = doc.data();
+                    return `
+                        <tr>
+                            <td>${r.tourName}</td>
+                            <td style="color:var(--primary); font-weight:bold;">${r.winner}</td>
+                            <td>${r.runner}</td>
+                        </tr>
+                    `;
+                }).join('') || '<tr><td colspan="3">No results published.</td></tr>';
+            }
         });
 }
 
@@ -233,103 +270,126 @@ function initPublicListeners() {
 // ============================================
 
 // --- A. CREATE TOURNAMENT ---
-document.getElementById('form-create-tour').onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-        await db.collection('updates').add({
-            title: document.getElementById('tour-name').value,
-            date: document.getElementById('tour-date').value,
-            time: document.getElementById('tour-time').value,
-            desc: document.getElementById('tour-desc').value,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        alert("Tournament Posted to Cloud!");
-        e.target.reset();
-    } catch (err) { alert(err.message); }
-};
+const tourForm = document.getElementById('form-create-tour');
+if(tourForm) {
+    tourForm.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await db.collection('updates').add({
+                title: document.getElementById('tour-name').value,
+                date: document.getElementById('tour-date').value,
+                time: document.getElementById('tour-time').value,
+                desc: document.getElementById('tour-desc').value,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            alert("Tournament Posted!");
+            e.target.reset();
+        } catch (err) { alert(err.message); }
+    };
+}
 
 // --- B. CREATE TEAM ---
-document.getElementById('form-create-team').onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-        await db.collection('teams').add({
-            name: document.getElementById('team-name').value.trim(),
-            players: document.getElementById('team-players').value.trim(),
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        alert("Team Registered in Cloud!");
-        e.target.reset();
-    } catch (err) { alert(err.message); }
-};
+const teamForm = document.getElementById('form-create-team');
+if(teamForm) {
+    teamForm.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await db.collection('teams').add({
+                name: document.getElementById('team-name').value.trim(),
+                players: document.getElementById('team-players').value.trim(),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            alert("Team Registered!");
+            e.target.reset();
+        } catch (err) { alert(err.message); }
+    };
+}
 
 // --- C. PUBLISH RESULT ---
-document.getElementById('form-publish-result').onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-        await db.collection('results').add({
-            tourName: document.getElementById('res-tour-name').value,
-            winner: document.getElementById('res-winner').value,
-            runner: document.getElementById('res-runner').value,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        alert("Result Published!");
-        e.target.reset();
-    } catch (err) { alert(err.message); }
-};
+const resForm = document.getElementById('form-publish-result');
+if(resForm) {
+    resForm.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await db.collection('results').add({
+                tourName: document.getElementById('res-tour-name').value,
+                winner: document.getElementById('res-winner').value,
+                runner: document.getElementById('res-runner').value,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            alert("Result Published!");
+            e.target.reset();
+        } catch (err) { alert(err.message); }
+    };
+}
 
-// --- D. ADMIN MANAGE LISTS (With Delete ID) ---
+// --- D. ADMIN MANAGE LISTS & ACCESS ---
 function initAdminListeners() {
     // Manage Tournaments
     db.collection('updates').orderBy('createdAt', 'desc').onSnapshot(snap => {
         const list = document.getElementById('list-manage-tours');
-        list.innerHTML = snap.docs.map(doc => {
-            const u = doc.data();
-            return `
-                <div class="manage-item">
-                    <strong>${u.title}</strong>
-                    <button class="btn-danger" onclick="deleteCloudItem('updates', '${doc.id}')">Delete</button>
-                </div>
-            `;
-        }).join('');
+        if(list) {
+            list.innerHTML = snap.docs.map(doc => {
+                const u = doc.data();
+                return `
+                    <div class="manage-item">
+                        <strong>${u.title}</strong>
+                        <button class="btn-danger" onclick="deleteCloudItem('updates', '${doc.id}')">Delete</button>
+                    </div>
+                `;
+            }).join('');
+        }
     });
 
     // Manage Teams
     db.collection('teams').orderBy('createdAt', 'desc').onSnapshot(snap => {
         const list = document.getElementById('list-manage-teams');
-        list.innerHTML = snap.docs.map(doc => {
-            const t = doc.data();
-            return `
-                <div class="manage-item">
-                    <strong style="color:var(--primary)">${t.name}</strong>
-                    <p style="font-size:0.8rem; color:#ccc">${t.players}</p>
-                    <div class="manage-actions">
-                        <button class="btn-danger" onclick="deleteCloudItem('teams', '${doc.id}')">Delete</button>
+        if(list) {
+            list.innerHTML = snap.docs.map(doc => {
+                const t = doc.data();
+                return `
+                    <div class="manage-item">
+                        <strong style="color:var(--primary)">${t.name}</strong>
+                        <div class="manage-actions">
+                            <button class="btn-danger" onclick="deleteCloudItem('teams', '${doc.id}')">Delete</button>
+                        </div>
                     </div>
-                </div>
-            `;
-        }).join('');
+                `;
+            }).join('');
+        }
+    });
+
+    // Payment Logs
+    db.collection('payment_attempts').orderBy('time', 'desc').onSnapshot(snap => {
+        const logBox = document.getElementById('payment-logs');
+        if (logBox) {
+            logBox.innerHTML = snap.docs.map(doc => {
+                const p = doc.data();
+                return `<div class="manage-item" style="font-size:0.8rem; border-bottom:1px solid #333;">
+                    <b>${p.username}</b> (${p.amount})<br>
+                    <small>${p.email}</small>
+                </div>`;
+            }).join('') || '<p>No payments.</p>';
+        }
     });
 }
 
-// Global Delete Function (Cloud)
+// Global Delete Function
 window.deleteCloudItem = async (collection, docId) => {
-    if (confirm("Permanently delete this from the Cloud?")) {
+    if (confirm("Permanently delete this?")) {
         await db.collection(collection).doc(docId).delete();
     }
 };
 
-// Search Users (Cloud Query)
+// Search Users
 window.searchUsers = async () => {
     const query = document.getElementById('search-user').value.toLowerCase();
-    if (query.length < 3) return; // Save reads
+    if (query.length < 3) return;
 
     const display = document.getElementById('list-users');
     display.innerHTML = '<p>Searching...</p>';
 
-    // Note: Firestore doesn't allow native substring search (like LIKE %query%)
-    // Simple implementation: Fetch all and filter (for small apps) or use exact match
     const snap = await db.collection('users').get();
-
     const filtered = snap.docs
         .map(doc => doc.data())
         .filter(u => u.username.toLowerCase().includes(query) || u.uid.includes(query));
@@ -342,6 +402,43 @@ window.searchUsers = async () => {
     `).join('') || '<p>No users found.</p>';
 };
 
+// --- E. ACCESS CONTROL (Grant Chat / Make Admin) ---
+window.setAccess = async (type) => {
+    const emailInput = document.getElementById('target-email');
+    if(!emailInput) return; // Safety check
+    
+    const email = emailInput.value.trim().toLowerCase();
+    if(!email) return alert("Please enter a Gmail address first!");
+
+    try {
+        const snap = await db.collection('users').where('email', '==', email).get();
+        if (snap.empty) return alert("User not found! They must register first.");
+
+        const docId = snap.docs[0].id;
+        let updates = {};
+
+        if (type === 'player') {
+            updates = { chatAccess: true, role: 'user' };
+        } else if (type === 'admin') {
+            updates = { chatAccess: true, role: 'admin' };
+        } else if (type === 'revoke') {
+            updates = { chatAccess: false, role: 'user' };
+        }
+
+        await db.collection('users').doc(docId).update(updates);
+        
+        // If making admin, also add to admins collection for persistence
+        if (type === 'admin') {
+             await db.collection('admins').add({ email: email });
+        }
+
+        alert(`Successfully updated permissions for: ${email}`);
+        emailInput.value = ""; 
+    } catch (err) {
+        alert("Permission Error: " + err.message);
+    }
+};
+
 // ============================================
 // 6. OWNER PANEL LOGIC
 // ============================================
@@ -349,22 +446,28 @@ window.searchUsers = async () => {
 function initOwnerListeners() {
     // Admins List
     db.collection('admins').onSnapshot(snap => {
-        document.getElementById('list-admins').innerHTML = snap.docs.map(doc => `
-            <div class="manage-item" style="flex-direction:row; justify-content:space-between;">
-                <span>${doc.data().email}</span> 
-                <button class="btn-danger" onclick="deleteCloudItem('admins', '${doc.id}')">X</button>
-            </div>
-        `).join('');
+        const list = document.getElementById('list-admins');
+        if(list) {
+            list.innerHTML = snap.docs.map(doc => `
+                <div class="manage-item" style="flex-direction:row; justify-content:space-between;">
+                    <span>${doc.data().email}</span> 
+                    <button class="btn-danger" onclick="deleteCloudItem('admins', '${doc.id}')">X</button>
+                </div>
+            `).join('');
+        }
     });
 
     // Blocklist
     db.collection('blacklist').onSnapshot(snap => {
-        document.getElementById('list-blocked').innerHTML = snap.docs.map(doc => `
-            <div class="manage-item" style="flex-direction:row; justify-content:space-between;">
-                <span style="color:red;">${doc.data().email}</span> 
-                <button class="btn-primary" style="width:auto;" onclick="deleteCloudItem('blacklist', '${doc.id}')">Undo</button>
-            </div>
-        `).join('');
+        const list = document.getElementById('list-blocked');
+        if(list) {
+            list.innerHTML = snap.docs.map(doc => `
+                <div class="manage-item" style="flex-direction:row; justify-content:space-between;">
+                    <span style="color:red;">${doc.data().email}</span> 
+                    <button class="btn-primary" style="width:auto;" onclick="deleteCloudItem('blacklist', '${doc.id}')">Undo</button>
+                </div>
+            `).join('');
+        }
     });
 }
 
@@ -372,6 +475,13 @@ window.ownerGrantAdmin = async () => {
     const email = document.getElementById('owner-admin-email').value.trim().toLowerCase();
     if (!email) return;
     await db.collection('admins').add({ email: email });
+    
+    // Also update user doc to reflect role immediately
+    const snap = await db.collection('users').where('email', '==', email).get();
+    if(!snap.empty) {
+        await db.collection('users').doc(snap.docs[0].id).update({ role: 'admin', chatAccess: true });
+    }
+
     document.getElementById('owner-admin-email').value = '';
     alert("Admin Added!");
 };
@@ -385,155 +495,109 @@ window.ownerBlockUser = async () => {
     document.getElementById('owner-block-email').value = '';
     alert("User Blocked!");
 };
-// --- DYNAMIC UPI INTEGRATION ---
+
+// ============================================
+// 7. UPI PAYMENT & PRO CHAT SYSTEM
+// ============================================
+
 window.payViaUPI = () => {
     const upiId = "7296922359@fam";
     const payeeName = "PX ESPORTS";
-    const amount = "50.00";
+    const amount = "20.00";
     
-    // Check if the user is on a Mobile Device
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+    // Log payment attempt
+    db.collection('payment_attempts').add({
+        username: currentUser.username,
+        email: currentUser.email,
+        amount: amount,
+        time: firebase.firestore.FieldValue.serverTimestamp()
+    });
 
     if (isMobile) {
         const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${amount}&cu=INR`;
         window.location.href = upiUrl;
     } else {
-        // If on PC, tell them to use the QR code
-        alert("UPI Buttons only work on Mobile. Please scan the QR Code shown on the screen with your phone.");
-    }
-
-
-    // 4. Log the payment attempt in Firebase so you can track it
-    db.collection('payment_attempts').add({
-        username: currentUser.username,
-        email: currentUser.email,
-        amount: amount,
-        txnId: transactionId,
-        status: "Pending/Initiated",
-        time: firebase.firestore.FieldValue.serverTimestamp()
-    });
-};
-function navigate(pageId) {
-    // Hide all pages
-    document.querySelectorAll('.page-section').forEach(sec => sec.classList.add('hidden'));
-    
-    // Show clicked page
-    document.getElementById(pageId).classList.remove('hidden');
-
-    // IF CHAT TAB IS CLICKED, START THE REAL-TIME SYNC
-    if (pageId === 'pro-chat') {
-        startProChat();
-    } else {
-        // Stop listening to chat if we leave the page to save data/battery
-        if (chatListener) {
-            chatListener();
-            chatListener = null;
-        }
-    }
-}
-// --- PRO CHAT SYSTEM (FIXED) ---
-let chatListener = null;
-
-function startProChat() {
-    const chatBox = document.getElementById('chat-box');
-    
-    // Stop any previous listener to prevent duplicate messages
-    if (chatListener) chatListener();
-
-    // Listen to Firebase "pro_chat" collection
-    chatListener = db.collection('pro_chat')
-        .orderBy('time', 'asc')
-        .limitToLast(50) 
-        .onSnapshot(snapshot => {
-            chatBox.innerHTML = ""; // Clear box for fresh load
-            
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                
-                // Identify if the message is from ME or OTHERS
-                const isMe = data.email === currentUser.email;
-                
-                const msgDiv = document.createElement('div');
-                msgDiv.className = `msg-wrapper ${isMe ? 'msg-me' : 'msg-other'}`;
-                
-                // We use data.username which we save when sending the message
-                msgDiv.innerHTML = `
-                    <span class="msg-info">${data.username}</span>
-                    <div class="msg-text">${data.text}</div>
-                `;
-                
-                chatBox.appendChild(msgDiv);
-            });
-            
-            // Auto-scroll to bottom so you see the newest message
-            chatBox.scrollTop = chatBox.scrollHeight;
-        }, error => {
-            console.error("Chat Error: ", error);
-            chatBox.innerHTML = `<p style="color:red; text-align:center;">You don't have permission to view this chat.</p>`;
-        });
-}
-
-// Handle Sending Messages (Attaching Username)
-document.getElementById('chat-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const input = document.getElementById('chat-msg');
-    const messageText = input.value.trim();
-
-    if (messageText !== "") {
-        try {
-            await db.collection('pro_chat').add({
-                username: currentUser.username, // From your Registration data
-                email: currentUser.email,       // To identify the sender
-                text: messageText,
-                time: firebase.firestore.FieldValue.serverTimestamp() // Cloud Time
-            });
-            input.value = ""; // Clear input box
-        } catch (error) {
-            alert("Could not send message. Check if you have Paid!");
-        }
+        alert("Please scan the QR Code on screen with your phone.");
     }
 };
-// Helper to format Date and Time
+
+// Helper: Format Date/Time
 function formatChatTime(timestamp) {
     if (!timestamp) return "Sending...";
     const date = timestamp.toDate();
     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Pro Chat Logic
 function startProChat() {
     const chatBox = document.getElementById('chat-box');
-    if (chatListener) chatListener();
+    if (!chatBox) return;
 
-    chatListener = db.collection('pro_chat').orderBy('time', 'asc').onSnapshot(snap => {
-        chatBox.innerHTML = "";
-        snap.forEach(doc => {
-            const data = doc.data();
-            const isMe = data.email === currentUser.email;
-            
-            // 1. Determine Role & Style
-            let roleClass = "";
-            let roleIcon = "";
-            
-            if (OWNERS.includes(data.email)) {
-                roleClass = "role-owner";
-                roleIcon = '<i class="fas fa-crown crown-owner"></i>';
-            } else if (data.role === 'admin') {
-                roleClass = "role-admin";
-                roleIcon = '<i class="fas fa-user-shield shield-admin"></i>';
-            }
+    if (chatListener) chatListener(); // Clear previous
 
-            const msgDiv = document.createElement('div');
-            // Logic: if it's me, use gold; if other, use dark. Then add the role-specific class.
-            msgDiv.className = `msg-wrapper ${isMe ? 'msg-me' : 'msg-other'} ${roleClass}`;
-            
-            msgDiv.innerHTML = `
-                <span class="msg-info">${roleIcon}${data.username}</span>
-                <div class="msg-text">${data.text}</div>
-                <span class="msg-time">${formatChatTime(data.time)}</span>
-            `;
-            
-            chatBox.appendChild(msgDiv);
+    chatListener = db.collection('pro_chat').orderBy('time', 'asc').limitToLast(50)
+        .onSnapshot(snap => {
+            chatBox.innerHTML = "";
+            snap.forEach(doc => {
+                const data = doc.data();
+                const isMe = data.email === currentUser.email;
+                
+                // Determine Role & Style
+                let roleClass = "";
+                let roleIcon = "";
+                
+                if (OWNERS.includes(data.email)) {
+                    roleClass = "role-owner";
+                    roleIcon = '<i class="fas fa-crown" style="color:gold; margin-right:5px;"></i>';
+                } else if (data.role === 'admin') {
+                    roleClass = "role-admin";
+                    roleIcon = '<i class="fas fa-user-shield" style="color:#3b82f6; margin-right:5px;"></i>';
+                }
+
+                // Format Time
+                const timeStr = formatChatTime(data.time);
+
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `msg-wrapper ${isMe ? 'msg-me' : 'msg-other'} ${roleClass}`;
+                
+                msgDiv.innerHTML = `
+                    <span class="msg-info">${roleIcon}${data.username}</span>
+                    <div class="msg-text">${data.text}</div>
+                    <span class="msg-time">${timeStr}</span>
+                `;
+                
+                chatBox.appendChild(msgDiv);
+            });
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }, err => {
+            chatBox.innerHTML = `<p style="color:red; text-align:center; padding:20px;">
+                <i class="fas fa-lock"></i> Chat Locked.<br>Ask Admin for access.
+            </p>`;
         });
-        chatBox.scrollTop = chatBox.scrollHeight;
-    });
+}
+
+const chatForm = document.getElementById('chat-form');
+if (chatForm) {
+    chatForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('chat-msg');
+        const messageText = input.value.trim();
+
+        if (messageText !== "") {
+            try {
+                await db.collection('pro_chat').add({
+                    username: currentUser.username,
+                    email: currentUser.email,
+                    role: currentUser.role || 'user', // Send role with message
+                    text: messageText,
+                    time: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                input.value = ""; 
+            } catch (error) {
+                alert("Permission Denied! You are not authorized to chat.");
+            }
+        }
+    };
 }
